@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1f6feb">
+<title>Passport Photo Printer</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+:root{--bg:#f4f6fa;--card:#fff;--tx:#14213d;--mut:#5b6678;--pri:#1f6feb;--bd:#d9dfe9;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#10141c;--card:#1a2030;--tx:#e8ecf4;--mut:#99a3b5;--pri:#5b9bff;--bd:#2c3547}}
+*{box-sizing:border-box}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--tx);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;font-size:16px}
+main{max-width:560px;margin:0 auto;padding:14px}
+h1{font-size:20px;margin:6px 0 14px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:14px;margin-bottom:12px}
+.card h2{font-size:14px;margin:0 0 10px;color:var(--mut);text-transform:uppercase;letter-spacing:.05em}
+button,.btn{font:inherit;border:1px solid var(--bd);background:var(--card);color:var(--tx);border-radius:10px;padding:10px 14px;cursor:pointer}
+.pri{background:var(--pri);border-color:var(--pri);color:#fff;font-weight:600;width:100%;padding:14px;font-size:17px}
+.seg{display:flex;gap:6px;margin-bottom:10px}
+.seg button{flex:1;padding:10px 4px}
+.seg button.on{background:var(--pri);color:#fff;border-color:var(--pri)}
+.lab{font-size:13px;color:var(--mut);margin:8px 0 4px}
+#cropBox{display:flex;justify-content:center;background:var(--bg);border-radius:10px;padding:10px}
+canvas{touch-action:none;max-width:100%;background:#fff;box-shadow:0 0 0 1px var(--bd)}
+input[type=range]{width:100%}
+.row{display:flex;gap:8px;margin-top:8px}.row button{flex:1}
+#wrap{overflow:hidden;background:#cfd6e3;border-radius:10px;position:relative}
+#sheet{background:#fff;position:absolute;left:0;top:0;transform-origin:0 0;overflow:hidden}
+#sheet img{position:absolute;display:block;border:.35mm solid #000}
+.note{font-size:13px;color:var(--mut);line-height:1.45}
+.warn{color:#c0392b;font-weight:600}
+.pick{position:relative;text-align:center}.pick .btn{display:block}.pick input{position:absolute;left:0;top:0;width:100%;height:100%;opacity:0;cursor:pointer}
+@media print{
+ html,body{background:#fff}
+ .noprint{display:none!important}
+ main{padding:0;max-width:none}
+ #wrap{position:static;overflow:visible;height:auto!important;background:none;border-radius:0}
+ #sheet{position:static;transform:none!important}
+}
+</style>
+<style id="pg"></style>
+</head>
+<body>
+<main>
+<h1 class="noprint">Passport Photo Printer</h1>
+
+<div class="card noprint">
+ <h2>1 · Photo</h2>
+ <div class="pick"><span class="btn">Choose photo</span><input id="f" type="file" accept="image/*"></div>
+ <div class="lab" id="hint">Pick a photo (background already done).</div>
+</div>
+
+<div class="card noprint">
+ <h2>2 · Size and layout</h2>
+ <div class="lab">Photo (width × height)</div>
+ <div class="seg" id="sSize"><button data-v="35x45" class="on">35 × 45 mm</button><button data-v="45x35">45 × 35 mm</button></div>
+ <div class="lab">Paper</div>
+ <div class="seg" id="sPaper"><button data-v="A4" class="on">A4</button><button data-v="4x6">4 × 6 in</button></div>
+ <div class="lab">Photos per sheet</div>
+ <div class="seg" id="sN"><button data-v="4">4</button><button data-v="6" class="on">6</button><button data-v="8">8</button></div>
+</div>
+
+<div class="card noprint" id="cropCard" style="display:none">
+ <h2>3 · Adjust crop</h2>
+ <div id="cropBox"><canvas id="cv"></canvas></div>
+ <div class="lab">Zoom</div>
+ <input id="zoom" type="range" min="1" max="4" step="0.01" value="1">
+ <div class="row"><button id="rot">Rotate 90°</button><button id="reset">Reset</button></div>
+ <div class="note" style="margin-top:8px">Drag the photo to move it. Dotted lines help centre the face.</div>
+</div>
+
+<div class="card noprint">
+ <h2>4 · Preview</h2>
+ <div id="wrap"><div id="sheet"></div></div>
+ <div class="note" id="info" style="margin-top:8px"></div>
+</div>
+
+<button class="pri noprint" id="print">Print</button>
+<button class="noprint" id="pdf" style="width:100%;margin-top:8px">Save as PDF (backup)</button>
+<p class="note noprint">In the print screen choose the correct paper size and set scale to <b>100%</b> (not “Fit to page”) so every photo measures exactly 35 × 45 mm.</p>
+</main>
+
+<script>
+(function(){
+var PAPER={A4:[210,297],'4x6':[101.6,152.4]};
+var M=3,DPI=300;
+var S={w:35,h:45,paper:'A4',n:6,img:null,z:1,cx:0,cy:0,rot:0,base:1,data:null};
+var cv=document.getElementById('cv'),ctx=cv.getContext('2d');
+var FW=240,FH=0;
+
+function seg(id,key,cb){
+ var el=document.getElementById(id);
+ el.addEventListener('click',function(e){
+  var b=e.target.closest('button');if(!b)return;
+  [].forEach.call(el.children,function(x){x.classList.remove('on')});
+  b.classList.add('on');cb(b.dataset.v);
+ });
+}
+seg('sSize',0,function(v){var p=v.split('x');S.w=+p[0];S.h=+p[1];setFrame();refit();});
+seg('sPaper',0,function(v){S.paper=v;layout();});
+seg('sN',0,function(v){S.n=+v;layout();});
+
+function setFrame(){
+ FW=S.w>S.h?300:240;
+ FH=Math.round(FW*S.h/S.w);
+ cv.width=FW;cv.height=FH;
+ cv.style.width=FW+'px';cv.style.height=FH+'px';
+}
+function dims(){var r=(S.rot/90)%2!==0;return r?[S.img.height,S.img.width]:[S.img.width,S.img.height];}
+function refit(){
+ if(!S.img)return;
+ var d=dims();
+ S.base=Math.max(FW/d[0],FH/d[1]);
+ S.z=1;S.cx=FW/2;S.cy=FH/2;
+ document.getElementById('zoom').value=1;
+ draw();
+}
+function paint(c,k,guides){
+ c.fillStyle='#fff';c.fillRect(0,0,FW*k,FH*k);
+ c.save();c.scale(k,k);c.translate(S.cx,S.cy);
+ c.rotate(S.rot*Math.PI/180);c.scale(S.base*S.z,S.base*S.z);
+ c.drawImage(S.img,-S.img.width/2,-S.img.height/2);
+ c.restore();
+ if(guides){
+  c.save();c.strokeStyle='rgba(31,111,235,.8)';c.setLineDash([4,4]);c.lineWidth=1;
+  c.beginPath();c.moveTo(FW/2,0);c.lineTo(FW/2,FH);
+  c.moveTo(0,FH*.42);c.lineTo(FW,FH*.42);c.stroke();c.restore();
+ }
+}
+function draw(){
+ if(!S.img)return;
+ paint(ctx,1,true);
+ var k=Math.round(S.w/25.4*DPI)/FW;
+ var o=document.createElement('canvas');
+ o.width=Math.round(S.w/25.4*DPI);o.height=Math.round(S.h/25.4*DPI);
+ paint(o.getContext('2d'),k,false);
+ S.data=o.toDataURL('image/jpeg',.95);
+ layout();
+}
+
+document.getElementById('f').addEventListener('change',function(e){
+ var f=e.target.files[0];if(!f)return;
+ var u=URL.createObjectURL(f),im=new Image();
+ im.onload=function(){
+  S.img=im;S.rot=0;
+  document.getElementById('cropCard').style.display='block';
+  document.getElementById('hint').textContent='Selected: '+f.name;
+  setFrame();refit();
+ };
+ im.src=u;
+});
+document.getElementById('zoom').addEventListener('input',function(e){S.z=+e.target.value;draw();});
+document.getElementById('rot').addEventListener('click',function(){S.rot=(S.rot+90)%360;refit();});
+document.getElementById('reset').addEventListener('click',refit);
+
+var drag=null;
+cv.addEventListener('pointerdown',function(e){drag={x:e.clientX,y:e.clientY};cv.setPointerCapture(e.pointerId);});
+cv.addEventListener('pointermove',function(e){
+ if(!drag)return;
+ var r=cv.getBoundingClientRect(),sc=FW/r.width;
+ S.cx+=(e.clientX-drag.x)*sc;S.cy+=(e.clientY-drag.y)*sc;
+ drag={x:e.clientX,y:e.clientY};draw();
+});
+cv.addEventListener('pointerup',function(){drag=null;});
+cv.addEventListener('pointercancel',function(){drag=null;});
+cv.addEventListener('wheel',function(e){
+ e.preventDefault();
+ var z=Math.min(4,Math.max(1,S.z*(e.deltaY<0?1.05:.95)));
+ S.z=z;document.getElementById('zoom').value=z;draw();
+},{passive:false});
+
+function plan(W,H){
+ var w=S.w,h=S.h,n=S.n;
+ var mc=Math.floor((W-2*M+2)/(w+2)),mr=Math.floor((H-2*M+2)/(h+2));
+ var best=null;
+ for(var c=1;c<=mc;c++)for(var r=1;r<=mr;r++){
+  if(c*r<n)continue;
+  var waste=c*r-n,area=c*r;
+  if(!best||waste<best.waste||(waste===best.waste&&(S.paper==='A4'?r<best.r:area<best.area)))best={c:c,r:r,waste:waste,area:area};
+ }
+ return best;
+}
+function layout(){
+ var P=PAPER[S.paper],cand=[];
+ (S.paper==='A4'?[[P[0],P[1]]]:[[P[0],P[1]],[P[1],P[0]]]).forEach(function(d){
+  var p=plan(d[0],d[1]);if(p)cand.push({W:d[0],H:d[1],p:p});
+ });
+ var sheet=document.getElementById('sheet'),wrap=document.getElementById('wrap'),info=document.getElementById('info');
+ sheet.innerHTML='';S.pl=[];
+ if(!cand.length){
+  info.innerHTML='<span class="warn">'+S.n+' photos of '+S.w+'×'+S.h+' mm do not fit on '+S.paper+'. Choose fewer photos or a bigger paper.</span>';
+  wrap.style.height='0';return;
+ }
+ cand.sort(function(a,b){return a.p.waste-b.p.waste||(a.W>a.H?1:0)-(b.W>b.H?1:0);});
+ var L=cand[0],W=L.W,H=L.H,c=L.p.c,r=L.p.r;
+ var gx=c>1?Math.min(5,(W-2*M-c*S.w)/(c-1)):0,gy=r>1?Math.min(5,(H-2*M-r*S.h)/(r-1)):0;
+ var bw=c*S.w+(c-1)*gx,bh=r*S.h+(r-1)*gy,ox=(W-bw)/2,oy=S.paper==='A4'?10:(H-bh)/2;
+ S.W=W;S.H=H;sheet.style.width=W+'mm';sheet.style.height=(H-.4)+'mm';
+ for(var i=0;i<S.n;i++){
+  var el=document.createElement('img');
+  if(S.data)el.src=S.data;else el.alt='';
+  el.style.width=S.w+'mm';el.style.height=S.h+'mm';
+  var px=ox+(i%c)*(S.w+gx),py=oy+Math.floor(i/c)*(S.h+gy);S.pl.push([px,py]);el.style.left=px+'mm';el.style.top=py+'mm';
+  if(!S.data)el.style.background='#e6e9f0';
+  sheet.appendChild(el);
+ }
+ document.getElementById('pg').textContent='@page{size:'+W+'mm '+H+'mm;margin:0}';
+ var pxw=W*96/25.4,sc=wrap.clientWidth/pxw;
+ sheet.style.transform='scale('+sc+')';
+ wrap.style.height=(H*96/25.4*sc)+'px';
+ info.textContent=S.paper+' '+(W>H?'landscape':'portrait')+' · '+c+' × '+r+' grid · '+S.n+' photos of '+S.w+'×'+S.h+' mm'+(S.data?'':' (upload a photo to fill)');
+}
+window.addEventListener('resize',layout);
+function b64u8(d){var s=atob(d.split(',')[1]),u=new Uint8Array(s.length);for(var i=0;i<s.length;i++)u[i]=s.charCodeAt(i);return u;}
+function buildPdf(){
+ var pt=72/25.4,Wp=S.W*pt,Hp=S.H*pt,jpg=b64u8(S.data);
+ var iw=Math.round(S.w/25.4*DPI),ih=Math.round(S.h/25.4*DPI);
+ var c='0 0 0 RG '+(0.35*pt).toFixed(3)+' w\n',b=0.175*pt;
+ S.pl.forEach(function(p){
+  var x=p[0]*pt,y=Hp-(p[1]+S.h)*pt,w=S.w*pt,h=S.h*pt;
+  c+='q '+w.toFixed(3)+' 0 0 '+h.toFixed(3)+' '+x.toFixed(3)+' '+y.toFixed(3)+' cm /Im0 Do Q\n';
+  c+=(x+b).toFixed(3)+' '+(y+b).toFixed(3)+' '+(w-2*b).toFixed(3)+' '+(h-2*b).toFixed(3)+' re S\n';
+ });
+ var enc=new TextEncoder(),parts=[],len=0,offs=[];
+ function add(x){var u=typeof x==='string'?enc.encode(x):x;parts.push(u);len+=u.length;}
+ function obj(n,head,stream){offs[n]=len;add(n+' 0 obj\n'+head);if(stream){add('\nstream\n');add(stream);add('\nendstream');}add('\nendobj\n');}
+ add('%PDF-1.4\n');
+ var cb=enc.encode(c);
+ obj(1,'<< /Type /Catalog /Pages 2 0 R >>');
+ obj(2,'<< /Type /Pages /Kids [3 0 R] /Count 1 >>');
+ obj(3,'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 '+Wp.toFixed(3)+' '+Hp.toFixed(3)+'] /Resources << /XObject << /Im0 5 0 R >> >> /Contents 4 0 R >>');
+ obj(4,'<< /Length '+cb.length+' >>',cb);
+ obj(5,'<< /Type /XObject /Subtype /Image /Width '+iw+' /Height '+ih+' /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length '+jpg.length+' >>',jpg);
+ var xo=len;
+ add('xref\n0 6\n0000000000 65535 f \n');
+ for(var i=1;i<=5;i++)add(('0000000000'+offs[i]).slice(-10)+' 00000 n \n');
+ add('trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n'+xo+'\n%%EOF');
+ return new Blob(parts,{type:'application/pdf'});
+}
+document.getElementById('pdf').addEventListener('click',function(){
+ if(!S.data||!S.pl.length){alert('Choose a photo first (and make sure the photos fit).');return;}
+ var u=URL.createObjectURL(buildPdf()),a=document.createElement('a');
+ a.href=u;a.download='passport-photos-'+S.paper+'-'+S.n+'.pdf';document.body.appendChild(a);a.click();a.remove();
+ setTimeout(function(){URL.revokeObjectURL(u)},4000);
+});
+if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(function(){});
+setFrame();layout();
+})();
+</script>
+</body>
+</html>
