@@ -80,7 +80,9 @@ input[type=range]{width:100%}
 </div>
 
 <button class="pri noprint" id="print">Print</button>
-<button class="noprint" id="pdf" style="width:100%;margin-top:8px">Save as PDF (backup)</button>
+<button id="pdf" style="display:none"></button>
+<div class="note noprint" id="msg"></div>
+<div class="note noprint" style="margin-top:6px">Version 3</div>
 <p class="note noprint">In the print screen choose the correct paper size and set scale to <b>100%</b> (not “Fit to page”) so every photo measures exactly 35 × 45 mm.</p>
 </main>
 
@@ -246,7 +248,9 @@ document.getElementById('pdf').addEventListener('click',function(){
  var u=URL.createObjectURL(buildPdf()),a=document.createElement('a');
  a.href=u;a.download='passport-photos-'+S.paper+'-'+S.n+'.pdf';document.body.appendChild(a);a.click();a.remove();
  setTimeout(function(){URL.revokeObjectURL(u)},4000);
+ document.getElementById('msg').textContent='PDF saved. Tap Open on the download message (or open it from Downloads) to print in Canon PRINT.';
 });
+document.getElementById('print').addEventListener('click',function(){document.getElementById('pdf').click();});
 if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(function(){});
 setFrame();layout();
 })();
